@@ -1,0 +1,114 @@
+---
+title: "Assignment 5 - Meta-analysis of pitch in schizophrenia"
+author: "Astrid Rybner, Kata Molnár, Nicole Dwenger and Sofie Rødkjær"
+date: "December 5, 2019"
+output: 
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Building on the shoulders of giants: meta-analysis
+
+## Questions to be answered
+
+1. What is the current evidence for distinctive vocal patterns in schizophrenia? Report how many papers report quantitative estimates, comment on what percentage of the overall studies reviewed they represent (see PRISMA chart) your method to analyze them, the estimated effect size of the difference (mean effect size and standard error) and forest plots representing it. N.B. Only measures of pitch mean and pitch sd are required for the assignment. Feel free to ignore the rest (although pause behavior looks interesting, if you check my article).
+
+2. Do the results match your own analysis from Assignment 3? If you add your results to the meta-analysis, do the estimated effect sizes change? Report the new estimates and the new forest plots.
+
+3. Assess the quality of the literature: report and comment on heterogeneity of the studies (tau, I2), on publication bias (funnel plot), and on influential studies.
+
+## Tips on the process to follow:
+
+- Download the data on all published articles analyzing voice in schizophrenia and the prisma chart as reference of all articles found and reviewed
+- Look through the dataset to find out which columns to use, and if there is any additional information written as comments (real world data is always messy!).
+    * Hint: PITCH_F0M and PITCH_F0SD group of variables are what you need
+    * Hint: Make sure you read the comments in the columns: `pitch_f0_variability`, `frequency`, `Title`,  `ACOUST_ANA_DESCR`, `DESCRIPTION`, and `COMMENTS`
+- Following the procedure in the slides calculate effect size and standard error of the effect size per each study. N.B. we focus on pitch mean and pitch standard deviation.
+ . first try using lmer (to connect to what you know of mixed effects models)
+ . then use rma() (to get some juicy additional statistics)
+ 
+```{r}
+#LOAD LIBRARIES
+library(tidyverse, lme4)
+pacman::p_load(lmerTest, simr, DescTools, goeveg, sjstats, effsize, ggplot2, dplyr, groupdata2, stringr, caret, tidyr, metafor)
+
+#load data
+data <- readxl::read_xlsx("Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx")
+
+###### number of participants #####
+#n1 <- data$SAMPLE_SIZE_SZ
+#n2 <- data$SAMPLE_SIZE_HC
+
+###### mean and sd of participants #####
+#m1 <- data$PITCH_F0_SZ_M #the mean of participants
+#m2 <- data$PITCH_F0_HC_M
+#sd1 <- data$PITCH_F0_SZ_SD #the sd of participants
+#sd2 <- data$PITCH_F0_HC_SD
+
+###### Sd of mean and sd (on a group level) #####
+#sd_m1 <- data$PITCH_F0SD_SZ_M # the sd of the mean (group level)
+#sd_m2 <- data$PITCH_F0SD_HC_M
+#sd_sd1 <- data$PITCH_F0SD_SZ_SD # the sd of the sd (group level)
+#sd_sd2 <- data$PITCH_F0SD_HC_SD
+
+#mean estimates within studies
+mean <- escalc(n1i = data$SAMPLE_SIZE_SZ, n2i = data$SAMPLE_SIZE_HC, m1i = data$PITCH_F0_SZ_M, m2i = data$PITCH_F0_HC_M, sd1i = data$PITCH_F0_SZ_SD, sd2i = data$PITCH_F0_HC_SD, measure = "SMD")
+#yi = mean estimates
+#vi = variance
+
+sd <- escalc(n1i = data$SAMPLE_SIZE_SZ, n2i = data$SAMPLE_SIZE_HC, m1i = data$PITCH_F0SD_SZ_M, m2i = data$PITCH_F0SD_HC_M, sd1i = data$PITCH_F0SD_SZ_SD, sd2i = data$PITCH_F0SD_HC_SD, measure = "SMD")
+
+#change names of columns in mean and sd so that i can tell them apart 
+data <- data %>%  mutate(esmean = mean$yi, varmean = mean$vi)
+data <- data %>% mutate(essd = sd$yi, varsd = sd$vi)
+
+##### MODELS #####
+model_mean <- lmer(esmean ~ 1 + (1 | StudyID), data = data, weights = 1/varmean, REML = F, control = lmerControl(
+    check.nobs.vs.nlev = "ignore",
+    check.nobs.vs.nRE = "ignore"
+))
+summary(model_mean)
+
+model_sd <- lmer(essd ~ 1 + (1 | StudyID), data = data, weights = 1/varsd, REML = F, control = lmerControl(
+    check.nobs.vs.nlev = "ignore",
+    check.nobs.vs.nRE = "ignore"
+))
+summary(model_sd)
+
+model_mean1 <- rma(yi = esmean, vi = varmean, data = data, slab = StudyID)
+model_sd1 <- rma(yi = essd, vi = varsd, data = data, slab = StudyID)
+
+```
+
+
+
+- Build a forest plot of the results (forest(model))
+```{r}
+#forest plot
+forest(model_mean1)
+
+#funnel plot
+funnel(model_mean1, main = "Random Effects Model", xlab = "Standardized Mean
+Difference")
+
+#testing if there are influential studies
+inf <- influence(model_mean1)
+print(inf)
+plot(inf) #study 13 seems to be influential (the dot is red)
+
+#testing more stuff that i don't know what is
+regtest(model_mean1)
+ranktest(model_mean1)
+```
+ 
+- Go back to Assignment 3, add your own study to the data table, and re-run meta-analysis. Do the results change?
+```{r}
+
+```
+
+
+- Now look at the output of rma() and check tau and I2
