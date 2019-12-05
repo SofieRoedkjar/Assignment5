@@ -43,7 +43,7 @@ data <- readxl::read_xlsx("Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx")
 #n1 <- data$SAMPLE_SIZE_SZ
 #n2 <- data$SAMPLE_SIZE_HC
 
-###### mean and sd of participants #####
+###### mean and sd of the mean from each participants #####
 #m1 <- data$PITCH_F0_SZ_M #the mean of participants
 #m2 <- data$PITCH_F0_HC_M
 #sd1 <- data$PITCH_F0_SZ_SD #the sd of participants
@@ -79,6 +79,7 @@ model_sd <- lmer(essd ~ 1 + (1 | StudyID), data = data, weights = 1/varsd, REML 
 ))
 summary(model_sd)
 
+
 model_mean1 <- rma(yi = esmean, vi = varmean, data = data, slab = StudyID)
 model_sd1 <- rma(yi = essd, vi = varsd, data = data, slab = StudyID)
 
@@ -90,24 +91,150 @@ model_sd1 <- rma(yi = essd, vi = varsd, data = data, slab = StudyID)
 ```{r}
 #forest plot
 forest(model_mean1)
+forest(model_sd1)
 
 #funnel plot
 funnel(model_mean1, main = "Random Effects Model", xlab = "Standardized Mean
 Difference")
 
+funnel(model_sd1, main = "Random Effects Model", xlab = "Standardized Mean
+Difference - SD")
+
 #testing if there are influential studies
 inf <- influence(model_mean1)
 print(inf)
-plot(inf) #study 13 seems to be influential (the dot is red)
+plot(inf) #study 13 seems to be influential (the dot is red), but it's problably study 11
 
-#testing more stuff that i don't know what is
-regtest(model_mean1)
-ranktest(model_mean1)
+inf_sd <- influence(model_sd1)
+print(inf_sd) #study 15 is influential 
+plot(inf_sd)
+
+#testing more stuff
+regtest(model_mean1) #if this is significant, then there is publication bias
+ranktest(model_mean1) #similar to the regtest BUT takes into account that effects may not be linear
+
+regtest(model_sd1)
+ranktest(model_sd1)
+
 ```
  
 - Go back to Assignment 3, add your own study to the data table, and re-run meta-analysis. Do the results change?
 ```{r}
+#load data from Assignment 3 - only the Danish data
+danish <- read.csv("danish_data.csv")
 
+################### WRONG!!! DON'T USE THIS ###########################
+
+#add column with scaled Mean and SD
+danish$scale_mean <- scale(danish$Mean)
+danish$scale_mean <- as.numeric(scale(danish$scale_mean))
+
+danish$scale_sd <- scale(danish$SD)
+danish$scale_sd <- as.numeric(scale(danish$scale_sd))
+
+# create a mean and a sd model to get
+pitchmean <- lmer(scale_mean ~ 1 + Diagnosis + (1+Diagnosis|uPairID), data = danish)
+pitchmeansum <- summary(pitchmean)
+y1_m <- pitchmeansum$coefficients[2,1] #the estimate (yi)
+# sqrt(number of participants)*SE = SD ... SD^2 = vi
+v1_m <- (sqrt(122)*pitchmeansum$coefficients[2,2])^2
+
+pitchsd <- lmer(scale_sd ~ 1 + Diagnosis + (1+Diagnosis|uPairID), data = danish)
+pitchsdsum <- summary(pitchsd)
+y1_sd <- pitchsdsum$coefficients[2,1]
+# sqrt(number of participants)*SE = SD ... SD^2 = vi
+v1_sd <- (sqrt(122)*pitchsdsum$coefficients[2,2])^2
+
+
+new <- data.frame("StudyID" = 60, "esmean" = y1_m, "essd" = y1_sd, "varmean" = v1_m, "varsd" = v1_sd)
+data <- bind_rows(data, new)
+
+##################################################################################################
+##################################### HERE WE GO AGAIN ###########################################
+#dataframe with mean of mean, mean of sd, sd of mean, sd of sd and samplesize 
+sum <- danish %>% group_by(Diagnosis) %>% 
+  summarise("SampleSize" = nlevels(as.factor(uID)),
+            "MeanofMean" = mean(Mean),
+            "SDofMean" = sd(Mean), 
+            "MeanofSD" = mean(SD), 
+            "SDofSD" = sd(SD))
+
+#dataframe with the same column names as in "data" 
+new <- data.frame("StudyID" = 60, 
+                  "SAMPLE_SIZE_SZ" = sum$SampleSize[sum$Diagnosis == 1], 
+                  "SAMPLE_SIZE_HC" = sum$SampleSize[sum$Diagnosis == 0],
+                  "PITCH_F0_SZ_M" = sum$MeanofMean[sum$Diagnosis == 1],
+                  "PITCH_F0_HC_M" = sum$MeanofMean[sum$Diagnosis == 0],
+                  "PITCH_F0_SZ_SD" = sum$SDofMean[sum$Diagnosis == 1], 
+                  "PITCH_F0_HC_SD" = sum$SDofMean[sum$Diagnosis == 0],
+                  "PITCH_F0SD_SZ_M" = sum$MeanofSD[sum$Diagnosis == 1],
+                  "PITCH_F0SD_HC_M" = sum$MeanofSD[sum$Diagnosis == 0],
+                  "PITCH_F0SD_SZ_SD" = sum$SDofSD[sum$Diagnosis == 1], 
+                  "PITCH_F0SD_HC_SD" = sum$SDofSD[sum$Diagnosis == 0])
+
+data <- bind_rows(data, new) #bind the rows to "data"
+
+#mean estimates within studies
+mean1 <- escalc(n1i = data$SAMPLE_SIZE_SZ, n2i = data$SAMPLE_SIZE_HC, m1i = data$PITCH_F0_SZ_M, m2i = data$PITCH_F0_HC_M, sd1i = data$PITCH_F0_SZ_SD, sd2i = data$PITCH_F0_HC_SD, measure = "SMD")
+#yi = mean estimates
+#vi = variance
+
+sd1 <- escalc(n1i = data$SAMPLE_SIZE_SZ, n2i = data$SAMPLE_SIZE_HC, m1i = data$PITCH_F0SD_SZ_M, m2i = data$PITCH_F0SD_HC_M, sd1i = data$PITCH_F0SD_SZ_SD, sd2i = data$PITCH_F0SD_HC_SD, measure = "SMD")
+
+#change names of columns in mean and sd so that i can tell them apart 
+data <- data %>%  mutate(esmean = mean1$yi, varmean = mean1$vi)
+data <- data %>% mutate(essd = sd1$yi, varsd = sd1$vi)
+
+##### MODELS #####
+model_mean_new <- lmer(esmean ~ 1 + (1 | StudyID), data = data, weights = 1/varmean, REML = F, control = lmerControl(
+    check.nobs.vs.nlev = "ignore",
+    check.nobs.vs.nRE = "ignore"
+))
+summary(model_mean_new)
+
+model_sd_new <- lmer(essd ~ 1 + (1 | StudyID), data = data, weights = 1/varsd, REML = F, control = lmerControl(
+    check.nobs.vs.nlev = "ignore",
+    check.nobs.vs.nRE = "ignore"
+))
+summary(model_sd_new)
+
+model_mean_new1 <- rma(yi = esmean, vi = varmean, data = data, slab = StudyID)
+model_sd_new1 <- rma(yi = essd, vi = varsd, data = data, slab = StudyID)
+
+summary(model_mean_new1)
+summary(model_sd_new1)
+
+
+####### PLOTS AND STUFF ######
+#forest plot
+forest(model_mean_new1)
+forest(model_sd_new1)
+
+#funnel plot
+funnel(model_mean_new1, main = "Random Effects Model", xlab = "Standardized Mean
+Difference")
+
+funnel(model_sd_new1, main = "Random Effects Model", xlab = "Standardized Mean
+Difference - SD")
+
+#testing if there are influential studies
+inf1 <- influence(model_mean_new1)
+print(inf1)
+plot(inf1) #study 13 seems to be influential (the dot is red), but it's problably study 11
+
+inf1_sd <- influence(model_sd_new1)
+print(inf1_sd) #study 15 is influential 
+plot(inf1_sd)
+
+#testing more stuff
+regtest(model_mean_new1) #if this is significant, then there is publication bias
+ranktest(model_mean_new1) #similar to the regtest BUT takes into account that effects may not be linear
+
+regtest(model_sd_new1)
+ranktest(model_sd_new1)
+
+confint(model_mean_new1)
+confint(model_sd_new1)
 ```
 
 
